@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GEP8 Speaking Test — Class Marker</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js"></script>
 <style>
 :root {
   --navy:#1a2744;--blue:#2e4a8b;--sky:#4a7cc9;--gold:#c9943a;--gold-light:#f0c97a;
@@ -205,15 +206,17 @@ header{background:var(--navy);padding:13px 26px;display:flex;align-items:center;
 <!-- SAVE BANNER -->
 <div class="save-banner">
   <div class="save-left">
-    <span style="font-size:20px;">☁️</span>
+    <span style="font-size:20px;">💾</span>
     <div class="save-info">
-      <strong>Cloud Sync Active:</strong> Your scores save automatically and load on any device. Open this page anywhere to see your latest data.
+      <strong>Auto-saving:</strong> Your work is saved in this browser. Use <strong>🔗 Copy Share Link</strong> to open your data in any browser or device.
     </div>
   </div>
   <div class="save-right">
-    <span id="status" class="status-text"><span class="dot dot-amber"></span>Connecting…</span>
+    <span id="status" class="status-text"></span>
     <button class="btn btn-sky" onclick="exportAllCSV()">⬇ Export CSV</button>
-    <button class="btn btn-ghost" onclick="exportBackup()" title="Download a local backup">📦 Backup</button>
+    <button class="btn btn-ghost" onclick="exportBackup()">📦 Backup</button>
+    <button class="btn btn-green" onclick="document.getElementById('fload').click()">📂 Restore Backup</button>
+    <button class="btn" style="background:var(--gold);color:var(--navy);font-weight:600;" onclick="copyShareLink()">🔗 Copy Share Link</button>
     <input type="file" id="fload" accept=".gep8,.json" style="display:none" onchange="loadProgress(event)">
   </div>
 </div>
@@ -236,9 +239,10 @@ header{background:var(--navy);padding:13px 26px;display:flex;align-items:center;
     <div class="empty-state" id="empty">
       <div class="ei">👩‍🏫</div>
       <div class="et">Welcome to GEP8 Marker</div>
-      <div class="es">Add your students to get started. Your work syncs automatically to the cloud — open this page on any device and your data will be here.</div>
+      <div class="es">Add your students to get started. Your work will be saved automatically in this browser.</div>
       <div class="ea">
         <button class="btn btn-gold" style="font-size:14px;padding:10px 20px;" onclick="openModal()">＋ Add Students</button>
+        <button class="btn btn-ghost" style="font-size:14px;padding:10px 20px;" onclick="document.getElementById('fload').click()">📂 Restore Backup</button>
       </div>
     </div>
     <div class="ovpanel" id="ovpanel"></div>
@@ -288,21 +292,16 @@ const gs=id=>students.find(s=>s.id===id);
 const tt=(s,t)=>!s.scores||!s.scores[t]?0:Object.values(s.scores[t]).reduce((a,b)=>a+(parseInt(b)||0),0);
 const at=s=>[0,1,2].reduce((a,t)=>a+tt(s,t),0);
 
-/* ── CLOUD CONFIG (no API key here — handled by Netlify function) ── */
-const PROXY = '/api/sync';
 const LS_KEY='gep8_progress';
-let binId=localStorage.getItem('gep8_binId')||null;
-let syncTimer=null;
 
-function setStatus(u,msg){
+function setStatus(u){
   unsaved=u;
-  if(msg){g('status').innerHTML=msg;return;}
-  g('status').innerHTML=u?'<span class="dot dot-amber"></span>Saving…':'<span class="dot dot-green"></span>Synced ☁️';
-  if(u){clearTimeout(syncTimer);syncTimer=setTimeout(saveToCloud,1200);}
+  g('status').innerHTML=u?'<span class="dot dot-amber"></span>Saving…':'<span class="dot dot-green"></span>Saved';
+  if(u) clearTimeout(window._saveTimer),window._saveTimer=setTimeout(persistToLS,600);
 }
 
-/* ── FLUSH DOM → STATE ── */
-function flushDOM(){
+function persistToLS(){
+  // Flush DOM → state first
   students.forEach(s=>[0,1,2].forEach(t=>{
     const de=g(`date-${s.id}-${t}`);if(de){if(!s.date)s.date={};s.date[t]=de.value;}
     CRITERIA.forEach((_,c)=>{
@@ -310,81 +309,22 @@ function flushDOM(){
     });
     const oe=g(`ov-${s.id}-${t}`);if(oe){if(!s.overall)s.overall={};s.overall[t]=oe.value;}
   }));
+  try{localStorage.setItem(LS_KEY,JSON.stringify({v:1,students}));}catch(e){console.warn('localStorage save failed',e);}
+  unsaved=false;
+  g('status').innerHTML='<span class="dot dot-green"></span>Saved';
 }
 
-/* ── SAVE TO CLOUD ── */
-async function saveToCloud(){
-  flushDOM();
-  const payload={v:1,students};
-  try{localStorage.setItem(LS_KEY,JSON.stringify(payload));}catch(e){}
+function loadFromLS(){
   try{
-    if(!binId){
-      const res=await fetch(PROXY,{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({method:'POST',payload})
-      });
-      const data=await res.json();
-      if(data.metadata&&data.metadata.id){
-        binId=data.metadata.id;
-        localStorage.setItem('gep8_binId',binId);
-        unsaved=false;
-        g('status').innerHTML='<span class="dot dot-green"></span>Synced ☁️';
-      } else {throw new Error('No bin ID');}
-    } else {
-      const res=await fetch(PROXY,{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({method:'PUT',binId,payload})
-      });
-      if(!res.ok)throw new Error('Update failed');
-      unsaved=false;
-      g('status').innerHTML='<span class="dot dot-green"></span>Synced ☁️';
-    }
-  }catch(e){
-    console.warn('Cloud save failed:',e);
-    g('status').innerHTML='<span class="dot" style="background:var(--red)"></span>Sync failed — saved locally';
-  }
-}
-
-/* ── LOAD FROM CLOUD ── */
-async function loadFromCloud(){
-  setStatus(false,'<span class="dot dot-amber"></span>Loading…');
-  if(binId){
-    try{
-      const res=await fetch(PROXY,{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({method:'GET',binId})
-      });
-      if(res.ok){
-        const data=await res.json();
-        const d=data.record;
-        if(d&&d.students&&d.students.length){
-          d.students.forEach(s=>{students.push(s);buildPanel(s);});
-          renderSB();g('empty').style.display='none';
-          selectStudent(students[0].id);
-          setStatus(false);
-          return true;
-        }
-      }
-    }catch(e){console.warn('Cloud load failed, trying local',e);}
-  }
-  // Fallback to localStorage
-  try{
-    const raw=localStorage.getItem(LS_KEY);if(!raw){setStatus(false,'<span class="dot dot-green"></span>Ready');return false;}
-    const d=JSON.parse(raw);if(!d.students||!d.students.length){setStatus(false,'<span class="dot dot-green"></span>Ready');return false;}
+    const raw=localStorage.getItem(LS_KEY);if(!raw)return false;
+    const d=JSON.parse(raw);if(!d.students||!d.students.length)return false;
     d.students.forEach(s=>{students.push(s);buildPanel(s);});
     renderSB();g('empty').style.display='none';
     selectStudent(students[0].id);
-    setStatus(false,'<span class="dot dot-amber"></span>Loaded locally — saving to cloud…');
-    saveToCloud();
+    setStatus(false);
     return true;
-  }catch(e){setStatus(false,'<span class="dot dot-green"></span>Ready');return false;}
+  }catch(e){return false;}
 }
-
-/* keep persistToLS as alias for backward compat */
-function persistToLS(){saveToCloud();}
 
 function toast(msg,type='ok'){
   const el=g('toast');el.textContent=msg;el.className=`toast ${type} show`;
@@ -393,8 +333,8 @@ function toast(msg,type='ok'){
 
 /* ── BACKUP / RESTORE (optional file-based) ── */
 function exportBackup(){
-  flushDOM();
-  const data=JSON.stringify({v:1,students});
+  persistToLS();
+  const data=localStorage.getItem(LS_KEY)||JSON.stringify({v:1,students});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));
   a.download=`GEP8_backup_${new Date().toISOString().slice(0,10)}.gep8`;
@@ -413,14 +353,46 @@ function loadProgress(evt){
       d.students.forEach(s=>{students.push(s);buildPanel(s);});
       renderSB();g('empty').style.display='none';
       if(students.length)selectStudent(students[0].id);
-      saveToCloud();setStatus(false);
+      persistToLS();setStatus(false);
       toast(`✅ Restored ${students.length} student${students.length>1?'s':''}!`);
     }catch{toast('❌ Could not read file. Please use a .gep8 backup file.','warn');}
   };
   r.readAsText(file);evt.target.value='';
 }
 
-/* ── SIDEBAR ── */
+/* ── SHARE LINK ── */
+function copyShareLink(){
+  persistToLS();
+  const data=JSON.stringify({v:1,students});
+  const compressed=LZString.compressToEncodedURIComponent(data);
+  const url=window.location.href.split('?')[0].split('#')[0]+'?d='+compressed;
+  navigator.clipboard.writeText(url).then(()=>{
+    toast('✅ Share link copied! Paste it in any browser to load your data.');
+  }).catch(()=>{
+    // Fallback: prompt with URL
+    prompt('Copy this link and open it in any browser:',url);
+  });
+}
+
+function loadFromURL(){
+  try{
+    const params=new URLSearchParams(window.location.search);
+    const d=params.get('d');if(!d)return false;
+    const raw=LZString.decompressFromEncodedURIComponent(d);
+    if(!raw)return false;
+    const data=JSON.parse(raw);
+    if(!data.students||!data.students.length)return false;
+    data.students.forEach(s=>{students.push(s);buildPanel(s);});
+    renderSB();g('empty').style.display='none';
+    selectStudent(students[0].id);
+    persistToLS(); // save to localStorage for this browser too
+    setStatus(false);
+    // Clean URL so refreshing doesn't re-import
+    window.history.replaceState({},'',window.location.pathname);
+    toast('✅ Loaded data from shared link!');
+    return true;
+  }catch(e){return false;}
+}
 function renderSB(){
   g('scount').textContent=`${students.length} / 25`;
   const list=g('slist');list.innerHTML='';
@@ -598,7 +570,7 @@ function saveStudents(){
     students=students.slice(0,names.length);
   }
   renderSB();closeModal();g('empty').style.display='none';
-  selectStudent(students[0].id);saveToCloud();setStatus(false);
+  selectStudent(students[0].id);persistToLS();setStatus(false);
   toast(`✅ ${students.length} student${students.length>1?'s':''} ready!`);
 }
 
@@ -628,8 +600,8 @@ function dl(content,name){
 
 /* ── INIT ── */
 g('modal').addEventListener('click',e=>{if(e.target===g('modal'))closeModal();});
-loadFromCloud();
-
+if(!loadFromURL() && !loadFromLS()) renderSB();
+setStatus(false);
 </script>
 </body>
 </html>
